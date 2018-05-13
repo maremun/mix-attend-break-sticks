@@ -118,7 +118,12 @@ class RNNModel(nn.Module):
         # return [(weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_(),
         #          weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_())
         #         for l in range(self.nlayers)]
-        return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True),
+        if torch.cuda.is_available():
+            return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True).cuda(),
+                 torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True).cuda())
+                for l in range(self.nlayers)]
+        else:
+            return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True),
                  torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True))
                 for l in range(self.nlayers)]
 

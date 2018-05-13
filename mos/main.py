@@ -6,11 +6,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+# from torch.autograd import Variable
 
 import gc
 
-import data
+import mos_data as data
 import model
 
 from utils import batchify, get_batch, repackage_hidden, create_exp_dir, save_checkpoint
@@ -117,9 +117,9 @@ corpus = data.Corpus(args.data)
 
 eval_batch_size = 10
 test_batch_size = 1
-train_data = batchify(corpus.train, args.batch_size, args)
-val_data = batchify(corpus.valid, eval_batch_size, args)
-test_data = batchify(corpus.test, test_batch_size, args)
+train_data = batchify(corpus.train, args.batch_size, torch.cuda.is_available())
+val_data = batchify(corpus.valid, eval_batch_size, torch.cuda.is_available())
+test_data = batchify(corpus.test, test_batch_size, torch.cuda.is_available())
 
 ###############################################################################
 # Build the model
@@ -140,6 +140,8 @@ if args.cuda:
         parallel_model = nn.DataParallel(model, dim=1).cuda()
 else:
     parallel_model = model
+    
+print(parallel_model)
 
 total_params = sum(x.data.nelement() for x in model.parameters())
 logging('Args: {}'.format(args))
@@ -158,16 +160,16 @@ def evaluate(data_source, batch_size=10):
     ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(batch_size)
     for i in range(0, data_source.size(0) - 1, args.bptt):
-        data, targets = get_batch(data_source, i, args, evaluation=True)
+        data, targets = get_batch(data_source, i, args.bptt, evaluation=True)
         targets = targets.view(-1)
 
-        log_prob, hidden = parallel_model(data, hidden)
+        log_prob, hidden = parallel_model(data.cuda(), hidden)
         loss = nn.functional.nll_loss(log_prob.view(-1, log_prob.size(2)), targets).data
 
         total_loss += loss * len(data)
 
         hidden = repackage_hidden(hidden)
-    return total_loss[0] / len(data_source)
+    return total_loss.item() / len(data_source)
 
 
 def train():
@@ -189,7 +191,7 @@ def train():
         lr2 = optimizer.param_groups[0]['lr']
         optimizer.param_groups[0]['lr'] = lr2 * seq_len / args.bptt
         model.train()
-        data, targets = get_batch(train_data, i, args, seq_len=seq_len)
+        data, targets = get_batch(train_data, i, seq_len=seq_len)
 
         optimizer.zero_grad()
 
@@ -200,8 +202,7 @@ def train():
             # Starting each batch, we detach the hidden state from how it was previously produced.
             # If we didn't, the model would try backpropagating all the way to start of the dataset.
             hidden[s_id] = repackage_hidden(hidden[s_id])
-
-            log_prob, hidden[s_id], rnn_hs, dropped_rnn_hs = parallel_model(cur_data, hidden[s_id], return_h=True)
+            log_prob, hidden[s_id], rnn_hs, dropped_rnn_hs = parallel_model(cur_data.cuda(), hidden[s_id], return_h=True)
             raw_loss = nn.functional.nll_loss(log_prob.view(-1, log_prob.size(2)), cur_targets)
 
             loss = raw_loss
@@ -220,13 +221,13 @@ def train():
             gc.collect()
 
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-        torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
 
         # total_loss += raw_loss.data
         optimizer.param_groups[0]['lr'] = lr2
         if batch % args.log_interval == 0 and batch > 0:
-            cur_loss = total_loss[0] / args.log_interval
+            cur_loss = total_loss.item() / args.log_interval
             elapsed = time.time() - start_time
             logging('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
