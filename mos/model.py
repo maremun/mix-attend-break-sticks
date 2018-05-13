@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+# from torch.autograd import Variable
 
 from embed_regularize import embedded_dropout
 from locked_dropout import LockedDropout
@@ -67,7 +67,6 @@ class RNNModel(nn.Module):
 
     def forward(self, input, hidden, return_h=False, return_prob=False):
         batch_size = input.size(1)
-
         emb = embedded_dropout(self.encoder, input, dropout=self.dropoute if self.training else 0)
         #emb = self.idrop(emb)
 
@@ -97,9 +96,9 @@ class RNNModel(nn.Module):
         logit = self.decoder(latent.view(-1, self.ninp))
 
         prior_logit = self.prior(output).contiguous().view(-1, self.n_experts)
-        prior = nn.functional.softmax(prior_logit)
+        prior = nn.functional.softmax(prior_logit, dim=1)
 
-        prob = nn.functional.softmax(logit.view(-1, self.ntoken)).view(-1, self.n_experts, self.ntoken)
+        prob = nn.functional.softmax(logit.view(-1, self.ntoken), dim=1).view(-1, self.n_experts, self.ntoken)
         prob = (prob * prior.unsqueeze(2).expand_as(prob)).sum(1)
 
         if return_prob:
@@ -116,15 +115,20 @@ class RNNModel(nn.Module):
 
     def init_hidden(self, bsz):
         weight = next(self.parameters()).data
-        return [(Variable(weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_()),
-                 Variable(weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_()))
+        # return [(weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_(),
+        #          weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_())
+        #         for l in range(self.nlayers)]
+        return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True),
+                 torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True))
                 for l in range(self.nlayers)]
 
 if __name__ == '__main__':
     model = RNNModel('LSTM', 10, 12, 12, 12, 2)
-    input = Variable(torch.LongTensor(13, 9).random_(0, 10))
+    # input = torch.LongTensor(13, 9, requires_grad=True).random_(0, 10)
+    input = torch.zeros((5, 9), dtype=torch.long).random_(0, 10)
+    input.requires_grad_()
     hidden = model.init_hidden(9)
-    model(input, hidden)
+    print(model(input, hidden)[0])
 
     # input = Variable(torch.LongTensor(13, 9).random_(0, 10))
     # hidden = model.init_hidden(9)

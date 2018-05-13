@@ -25,9 +25,7 @@ def embedded_dropout(embed, words, dropout=0.1, scale=None):
     # X = embed._backend.Embedding.apply(words, masked_embed_weight,
     # padding_idx, embed.max_norm, embed.norm_type,
     # embed.scale_grad_by_freq, embed.sparse)
-    X = F.embedding(words, masked_embed_weight,
-    padding_idx, embed.max_norm, embed.norm_type,
-    embed.scale_grad_by_freq, embed.sparse)
+    X = F.embedding(words, masked_embed_weight, padding_idx, embed.max_norm, embed.norm_type, embed.scale_grad_by_freq, embed.sparse)
     return X
 
 if __name__ == '__main__':
