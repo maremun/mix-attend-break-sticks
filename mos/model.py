@@ -57,7 +57,7 @@ class RNNModel(nn.Module):
         size = 0
         for p in self.parameters():
             size += p.nelement()
-        print('param size: {}'.format(size))
+        print('Param size: {}'.format(size))
 
     def init_weights(self):
         initrange = 0.1
