@@ -202,7 +202,8 @@ class DataSet:
                     tokens = [const.BOS_WORD] + tokens + [const.EOS_WORD]
                     sequence = [self.dictionary[token] if token in self.dictionary else self.dictionary[const.UNK_WORD] for token in tokens]
                     self.sentence.append(sequence)
-    
+        
+        self.sentence = sorted(self.sentence, key=lambda s:len(s))
         self.num_batch = int(len(self.sentence) / self.batch_size)
         self.index = range(self.num_batch)
         print('%d sentences were processed, %d longer than maximum length,%d were ignored because zero length'%(len(self.sentence), long_sentence, zero_sentence))
