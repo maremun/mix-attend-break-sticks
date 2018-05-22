@@ -25,7 +25,8 @@ def get_attn_pad_mask(seq_q, seq_k):
     assert seq_q.dim() == 2 and seq_k.dim() == 2
     b_size, len_q = seq_q.size()
     b_size, len_k = seq_k.size()
-    pad_attn_mask = seq_k.eq(const.PAD).unsqueeze(1)  # b_size x 1 x len_k
+    #pad_attn_mask = seq_k.eq(const.PAD).unsqueeze(1)  # b_size x 1 x len_k
+    pad_attn_mask = seq_k.eq(-1).unsqueeze(1)  # b_size x 1 x len_k
     pad_attn_mask = pad_attn_mask.expand(b_size, len_q, len_k) # b_size x len_q x len_k
     return pad_attn_mask
 
@@ -42,7 +43,7 @@ class Decoder(nn.Module):
                  max_seq_len, tgt_vocab_size, dropout=0.1, weighted=False):
         super(Decoder, self).__init__()
         self.d_model = d_model
-        self.tgt_emb = nn.Embedding(tgt_vocab_size, d_model, padding_idx=const.PAD)
+        self.tgt_emb = nn.Embedding(tgt_vocab_size, d_model) #, padding_idx=const.PAD)
         self.pos_emb = PosEncoding(max_seq_len * 10, d_model) # TODO: *10 fix
         self.dropout_emb = nn.Dropout(dropout)
         self.layer_type = DecoderLayer if not weighted else WeightedDecoderLayer
@@ -72,6 +73,7 @@ class Decoder(nn.Module):
             if return_attn:
                 dec_self_attns.append(dec_self_attn)
                 dec_enc_attns.append(dec_enc_attn)
+
         return dec_outputs, dec_self_attns, dec_enc_attns
 
 
