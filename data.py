@@ -53,14 +53,12 @@ class Corpus(object):
 
         # Tokenize file content
         with open(path, 'r', encoding='utf-8') as f:
-            ids = torch.LongTensor(tokens)
-            token = 0
+            ids = []
             for line in f:
                 words = line.split() + ['<eos>']
                 for word in words:
-                    ids[token] = self.dictionary.word2idx[word]
-                    token += 1
-
+                    ids.append(self.dictionary.word2idx[word])
+            ids = torch.tensor(ids, device=device, dtype=torch.long)
         return ids
     
 def batchify(data, bsz):
@@ -73,11 +71,10 @@ def batchify(data, bsz):
     print(data.size())
     return data
 
-def get_batch(source, i, seq_len=35, evaluation=False):
+def get_batch(source, i, seq_len=35):
     seq_len = min(seq_len, len(source) - 1 - i)
-    data = Variable(source[i:i+seq_len], volatile=evaluation)
-    # target = Variable(source[i+1:i+1+seq_len].view(-1))
-    target = Variable(source[i+1:i+1+seq_len])
+    data = source[i:i+seq_len, :].t().contiguous()
+    target = source[i+1:i+1+seq_len, :].t().contiguous()
     return data, target
 
 ###############################################
