@@ -114,7 +114,7 @@ class BatchSentLoader(object):
         self.idx += batch_size
 
         return tensor
-    
+
     next = __next__
 
     def __iter__(self):

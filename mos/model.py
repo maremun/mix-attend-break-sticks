@@ -8,35 +8,55 @@ from embed_regularize import embedded_dropout
 from locked_dropout import LockedDropout
 from weight_drop import WeightDrop
 
+
+class MoShead(nn.Module):
+    """MoShead functionality as a standalone module."""
+    def __init__(self, ntoken, ninp, nhid, nhidlast, encoder, lockdrop, tie_weights=False, n_experts=10):
+        super(MoShead, self).__init__()
+        self.ntoken = ntoken
+        self.ninp = ninp
+        self.nhidlast = nhidlast
+        self.n_experts = n_experts
+
+        self.lockdrop = lockdrop
+        self.prior = nn.Linear(nhidlast, n_experts, bias=False)
+        self.latent = nn.Sequential(nn.Linear(nhidlast, n_experts*ninp), nn.Tanh())
+        self.decoder = nn.Linear(ninp, ntoken)
+        if tie_weights:
+            if nhid != ninp:
+                raise ValueError('When using the tied flag, nhid must be equal to emsize')
+            self.decoder.weight = encoder.weight
+
+    def forward(self, output, dropoutl):
+        latent = self.latent(output)  # h
+        latent = self.lockdrop(latent, dropoutl)  # h after variational dropout
+        logit = self.decoder(latent.view(-1, self.ninp))  # HW
+
+        prior_logit = self.prior(output).contiguous().view(-1, self.n_experts)
+        prior = nn.functional.softmax(prior_logit, dim=1)  # pi
+
+        prob = nn.functional.softmax(logit.view(-1, self.ntoken), dim=1).view(-1, self.n_experts, self.ntoken)  # exp(hw) / sum(exp(hw))
+        prob = (prob * prior.unsqueeze(2).expand_as(prob)).sum(1)  # weighted sum
+        # TODO maybe we can do this with logsoftmax
+        return prob
+
+
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
-    def __init__(self, rnn_type, ntoken, ninp, nhid, nhidlast, nlayers, 
-                 dropout=0.5, dropouth=0.5, dropouti=0.5, dropoute=0.1, wdrop=0, 
+    def __init__(self, rnn_type, ntoken, ninp, nhid, nhidlast, nlayers,
+                 dropout=0.5, dropouth=0.5, dropouti=0.5, dropoute=0.1, wdrop=0,
                  tie_weights=False, ldropout=0.5, n_experts=10):
         super(RNNModel, self).__init__()
         self.lockdrop = LockedDropout()
         self.encoder = nn.Embedding(ntoken, ninp)
-        
+
         self.rnns = [torch.nn.LSTM(ninp if l == 0 else nhid, nhid if l != nlayers - 1 else nhidlast, 1, dropout=0) for l in range(nlayers)]
         if wdrop:
             self.rnns = [WeightDrop(rnn, ['weight_hh_l0'], dropout=wdrop) for rnn in self.rnns]
         self.rnns = torch.nn.ModuleList(self.rnns)
 
-        self.prior = nn.Linear(nhidlast, n_experts, bias=False)
-        self.latent = nn.Sequential(nn.Linear(nhidlast, n_experts*ninp), nn.Tanh())
-        self.decoder = nn.Linear(ninp, ntoken)
-
-        # Optionally tie weights as in:
-        # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
-        # https://arxiv.org/abs/1608.05859
-        # and
-        # "Tying Word Vectors and Word Classifiers: A Loss Framework for Language Modeling" (Inan et al. 2016)
-        # https://arxiv.org/abs/1611.01462
-        if tie_weights:
-            #if nhid != ninp:
-            #    raise ValueError('When using the tied flag, nhid must be equal to emsize')
-            self.decoder.weight = self.encoder.weight
+        self.head = MoShead(ntoken, ninp, nhidlast, self.encoder, self.lockdrop, tie_weights, n_experts)
 
         self.init_weights()
 
@@ -62,8 +82,8 @@ class RNNModel(nn.Module):
     def init_weights(self):
         initrange = 0.1
         self.encoder.weight.data.uniform_(-initrange, initrange)
-        self.decoder.bias.data.fill_(0)
-        self.decoder.weight.data.uniform_(-initrange, initrange)
+        self.head.decoder.bias.data.fill_(0)
+        self.head.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, input, hidden, return_h=False, return_prob=False):
         batch_size = input.size(1)
@@ -91,15 +111,7 @@ class RNNModel(nn.Module):
         output = self.lockdrop(raw_output, self.dropout)
         outputs.append(output)
 
-        latent = self.latent(output)
-        latent = self.lockdrop(latent, self.dropoutl)
-        logit = self.decoder(latent.view(-1, self.ninp))
-
-        prior_logit = self.prior(output).contiguous().view(-1, self.n_experts)
-        prior = nn.functional.softmax(prior_logit, dim=1)
-
-        prob = nn.functional.softmax(logit.view(-1, self.ntoken), dim=1).view(-1, self.n_experts, self.ntoken)
-        prob = (prob * prior.unsqueeze(2).expand_as(prob)).sum(1)
+        prob = self.head(output, self.dropoutl)
 
         if return_prob:
             model_output = prob
@@ -138,4 +150,3 @@ if __name__ == '__main__':
     # input = Variable(torch.LongTensor(13, 9).random_(0, 10))
     # hidden = model.init_hidden(9)
     # print(model.sample(input, hidden, 5, 6, 1, 2, sample_latent=True).size())
-
