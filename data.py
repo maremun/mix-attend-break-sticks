@@ -207,20 +207,20 @@ class DataSet:
         print('%d sentences were processed, %d longer than maximum length,%d were ignored because zero length'%(len(self.sentence), long_sentence, zero_sentence))
         self.describe_dataset()
         begin_of_group = 0
-        self.group = []
+        group = []
         self.groups =[]
         for sentence in self.sentence:
             if len(sentence) <= (begin_of_group+15):
-                self.group.append(sentence)
+                group.append(sentence)
             else:
-                if len(self.group) < 128:
-                    self.groups[-1] += self.group
+                if len(group) < 128:
+                    self.groups[-1] += group
                 else:
-                    self.groups.append(self.group)
+                    self.groups.append(group)
                 begin_of_group = begin_of_group+15
-                self.group = []
-                self.group.append(sentence)
-        self.num_batches = [len(group) for group in self.groups]      
+                group = []
+                group.append(sentence)
+        self.num_batches = [int(len(group)/self.batch_size) for group in self.groups]      
         print('Done.')
 
         
