@@ -96,12 +96,12 @@ class MoShead(nn.Module):
     def forward(self, output):
         # output: [batch_size x seq_len x d_model]
         latent = self.latent(output)  # h  [batch_size x seq_len x n_experts * d_model]
-        logit = self.decoder(latent.view(-1, self.d_model))  # HW [batch_size * seq_len * n_experts x d_model]
+        logit = self.decoder(latent.view(-1, self.d_model))  # HW [batch_size * seq_len * n_experts x d_model -> voc_size] 
 
         prior_logit = self.prior(output).contiguous().view(-1, self.n_experts)
         prior = nn.functional.softmax(prior_logit, dim=1)  # pi
 
-        prob = nn.functional.softmax(logit.view(-1, self.voc_size), dim=1).view(-1, self.n_experts, self.voc_size)  # exp(hw) / sum(exp(hw))
+        prob = nn.functional.softmax(logit.view(-1, self.voc_size), dim=1).view(-1, self.n_experts, self.voc_size)  # exp(hw) / sum(exp(hw'))
         prob = (prob * prior.unsqueeze(2).expand_as(prob)).sum(1)  # weighted sum
         # TODO maybe we can do this via logsoftmax
         return prob
