@@ -7,6 +7,7 @@ from torch.autograd import Variable
 from collections import OrderedDict, Counter
 from itertools import islice
 import const
+from random import shuffle
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -205,11 +206,27 @@ class DataSet:
         self.index = range(self.num_batch)
         print('%d sentences were processed, %d longer than maximum length,%d were ignored because zero length'%(len(self.sentence), long_sentence, zero_sentence))
         self.describe_dataset()
+        begin_of_group = 0
+        self.group = []
+        self.groups =[]
+        for sentence in self.sentence:
+            if len(sentence) <= (begin_of_group+15):
+                self.group.append(sentence)
+            else:
+                if len(self.group) < 128:
+                    self.groups[-1] += self.group
+                else:
+                    self.groups.append(self.group)
+                begin_of_group = begin_of_group+15
+                self.group = []
+                self.group.append(sentence)
+                
         print('Done.')
 
-
-    def get_batch(self, batch_idx):
-        lengths = [len(self.sentence[x]) for x in range(self.batch_size * batch_idx, self.batch_size * (batch_idx + 1))]
+        
+    def get_batch_new(self, batch_idx, group_id):
+        sents = self.groups[group_id]
+        lengths = [len(sents[x]) for x in range(self.batch_size * batch_idx, self.batch_size * (batch_idx + 1))]
         max_len = max(lengths)
         total_len = sum(lengths)
 
@@ -217,21 +234,46 @@ class DataSet:
 
         batch = torch.zeros(self.batch_size, max_len, dtype=torch.long, device=device)
         target = torch.zeros(self.batch_size, max_len, dtype=torch.long, device=device)
-
+      
         for i in range(self.batch_size):
             len_ = sorted_lengths[i][1] 
             idx_ = sorted_lengths[i][0]
 
             sequence_idx = idx_ + self.batch_size * batch_idx
             
-            batch[i, :len_-1].copy_(torch.tensor(self.sentence[sequence_idx][:len_-1], dtype=torch.long, device=device))
-            target[i, :len_-1].copy_(torch.tensor(self.sentence[sequence_idx][1:len_], dtype=torch.long, device=device))
+            batch[i, :len_-1].copy_(torch.tensor(sents[sequence_idx][:len_-1], dtype=torch.long, device=device))
+            target[i, :len_-1].copy_(torch.tensor(sents[sequence_idx][1:len_], dtype=torch.long, device=device))
 
         batch_lengths = torch.tensor([x[1] for x in sorted_lengths], device=device)
+        
+        return batch, batch_lengths, target
+        
+    def get_batch(self, batch_idx):
+        batch_sents = random.sample(random.sample(self.groups, 1)[0], self.batch_size)
+        
+        lengths = [len(sent) for sent in batch_sents]
+        max_len = max(lengths)
+        total_len = sum(lengths)
 
+        sorted_lengths = sorted(enumerate(lengths), key=lambda x: x[1], reverse=True)
+
+        batch = torch.zeros(self.batch_size, max_len, dtype=torch.long, device=device)
+        target = torch.zeros(self.batch_size, max_len, dtype=torch.long, device=device)
+      
+        for i in range(self.batch_size):
+            len_ = sorted_lengths[i][1] 
+            idx_ = sorted_lengths[i][0]
+            
+            batch[i, :len_-1].copy_(torch.tensor(batch_sents[idx_][:len_-1], dtype=torch.long, device=device))
+            target[i, :len_-1].copy_(torch.tensor(batch_sents[idx_][1:len_], dtype=torch.long, device=device))
+
+        batch_lengths = torch.tensor([x[1] for x in sorted_lengths], device=device)
+        
         return batch, batch_lengths, target
 
-
+    def shuffle_epoch(self):
+        self.groups = [random.sample(x, len(x)) for x in self.groups]
+    
     def shuffle(self):
         print(self.shuffle_level)
         assert self.shuffle_level > 0, 'Enable shuffle first!'
