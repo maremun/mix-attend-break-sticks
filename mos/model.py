@@ -56,7 +56,7 @@ class RNNModel(nn.Module):
             self.rnns = [WeightDrop(rnn, ['weight_hh_l0'], dropout=wdrop) for rnn in self.rnns]
         self.rnns = torch.nn.ModuleList(self.rnns)
 
-        self.head = MoShead(ntoken, ninp, nhidlast, self.encoder, self.lockdrop, tie_weights, n_experts)
+        self.head = MoShead(ntoken, ninp, nhid, nhidlast, self.encoder, self.lockdrop, tie_weights, n_experts)
 
         self.init_weights()
 
