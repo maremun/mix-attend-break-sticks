@@ -8,6 +8,8 @@ from embed_regularize import embedded_dropout
 from locked_dropout import LockedDropout
 from weight_drop import WeightDrop
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 
 class MoShead(nn.Module):
     """MoShead functionality as a standalone module."""
@@ -19,7 +21,12 @@ class MoShead(nn.Module):
         self.n_experts = n_experts
 
         self.lockdrop = lockdrop
-        self.prior = nn.Linear(nhidlast, n_experts, bias=False)
+        #self.prior = nn.Linear(nhidlast, n_experts, bias=False)
+        
+        #self.d = 1
+        self.reduce = nn.Linear(nhidlast, 2 * (n_experts - 1))  # self.d)
+        self.sigmoid = nn.Sigmoid()
+        
         self.latent = nn.Sequential(nn.Linear(nhidlast, n_experts*ninp), nn.Tanh())
         self.decoder = nn.Linear(ninp, ntoken)
         if tie_weights:
@@ -27,19 +34,42 @@ class MoShead(nn.Module):
                 raise ValueError('When using the tied flag, nhid must be equal to emsize')
             self.decoder.weight = encoder.weight
 
+
+    def reparameterize(self, mu, logvar):
+        if self.training:
+            std = torch.exp(0.5*logvar)
+            eps = torch.randn_like(std)
+            return eps.mul(std).add_(mu)
+        else:
+            return mu
+
+
     def forward(self, output, dropoutl):
         # output: [seq_len x batch_size x nhidlast]
-        latent = self.latent(output)  # h 
-        latent = self.lockdrop(latent, dropoutl)  # h after variational dropout
-        logit = self.decoder(latent.view(-1, self.ninp))  # HW
-        
-        prior_logit = self.prior(output).contiguous().view(-1, self.n_experts)
-        prior = nn.functional.softmax(prior_logit, dim=1)  # pi
+        latent = self.latent(output)  # h
+        latent = self.lockdrop(latent, dropoutl)  # h after variational dropout [seq_len x batch_size x n_experts * ninp]
+        logit = self.decoder(latent.view(-1, self.ninp))  # HW [seq_len * batch_size * n_experts x voc_size]
 
+        #prior_logit = self.prior(output).contiguous().view(-1, self.n_experts)
+        #prior = nn.functional.softmax(prior_logit, dim=1)  # pi
+
+        # this is essentially the gauss-logit parameterization from here: https://arxiv.org/pdf/1605.06197.pdf
+        mulogvar = self.reduce(output.view(-1, self.nhidlast))  # [seq_len * batch_size x 2 * (n_experts-1)]
+        mu = mulogvar[:, :self.n_experts-1]
+        logvar = mulogvar[:, self.n_experts-1:]
+        z = self.reparameterize(mu, logvar)
+        vs = self.sigmoid(z)  # [seq_len * batch_size x n_experts - 1]
+        vs = torch.cat([vs, torch.ones(vs.shape[0], 1, device=device)], 1)  # [seq_len * batch_size x n_experts]
+        R = 1. - vs
+        D = torch.diag(torch.ones(vs.shape[1] - 1, device=device), 1)
+        R = R @ D
+        R[:, 0] = 1.
+        pis = torch.cumprod(R, dim=1) * vs
+        
         prob = nn.functional.softmax(logit.view(-1, self.ntoken), dim=1).view(-1, self.n_experts, self.ntoken)  # exp(hw) / sum(exp(hw))
-        prob = (prob * prior.unsqueeze(2).expand_as(prob)).sum(1)  # weighted sum
+        prob = (prob * pis.unsqueeze(2).expand_as(prob)).sum(1)  # weighted sum
         # TODO maybe we can do this with logsoftmax
-        return prob
+        return prob, mu, logvar
 
 
 class RNNModel(nn.Module):
@@ -112,7 +142,7 @@ class RNNModel(nn.Module):
         output = self.lockdrop(raw_output, self.dropout)
         outputs.append(output)
 
-        prob = self.head(output, self.dropoutl)
+        prob, mu, logvar = self.head(output, self.dropoutl)
 
         if return_prob:
             model_output = prob
@@ -123,8 +153,8 @@ class RNNModel(nn.Module):
         model_output = model_output.view(-1, batch_size, self.ntoken)
 
         if return_h:
-            return model_output, hidden, raw_outputs, outputs
-        return model_output, hidden
+            return model_output, hidden, raw_outputs, outputs, mu, logvar
+        return model_output, hidden, mu, logvar
 
     def init_hidden(self, bsz):
         weight = next(self.parameters()).data
