@@ -220,7 +220,7 @@ class DataSet:
                 begin_of_group = begin_of_group+15
                 self.group = []
                 self.group.append(sentence)
-                
+        self.num_batches = [len(group) for group in self.groups]      
         print('Done.')
 
         
@@ -248,7 +248,7 @@ class DataSet:
         
         return batch, batch_lengths, target
         
-    def get_batch(self, batch_idx):
+    def get_batch_random(self, batch_idx):
         batch_sents = random.sample(random.sample(self.groups, 1)[0], self.batch_size)
         
         lengths = [len(sent) for sent in batch_sents]
@@ -269,6 +269,29 @@ class DataSet:
 
         batch_lengths = torch.tensor([x[1] for x in sorted_lengths], device=device)
         
+        return batch, batch_lengths, target
+    
+    def get_batch(self, batch_idx):
+        lengths = [len(self.sentence[x]) for x in range(self.batch_size * batch_idx, self.batch_size * (batch_idx + 1))]
+        max_len = max(lengths)
+        total_len = sum(lengths)
+
+        sorted_lengths = sorted(enumerate(lengths), key=lambda x: x[1], reverse=True)
+
+        batch = torch.zeros(self.batch_size, max_len, dtype=torch.long, device=device)
+        target = torch.zeros(self.batch_size, max_len, dtype=torch.long, device=device)
+
+        for i in range(self.batch_size):
+            len_ = sorted_lengths[i][1] 
+            idx_ = sorted_lengths[i][0]
+
+            sequence_idx = idx_ + self.batch_size * batch_idx
+            
+            batch[i, :len_-1].copy_(torch.tensor(self.sentence[sequence_idx][:len_-1], dtype=torch.long, device=device))
+            target[i, :len_-1].copy_(torch.tensor(self.sentence[sequence_idx][1:len_], dtype=torch.long, device=device))
+
+        batch_lengths = torch.tensor([x[1] for x in sorted_lengths], device=device)
+
         return batch, batch_lengths, target
 
     def shuffle_epoch(self):
