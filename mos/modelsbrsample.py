@@ -8,7 +8,7 @@ from embed_regularize import embedded_dropout
 from locked_dropout import LockedDropout
 from weight_drop import WeightDrop
 
-device = 'cpu' #'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 class MoShead(nn.Module):
@@ -23,8 +23,7 @@ class MoShead(nn.Module):
         self.lockdrop = lockdrop
         #self.prior = nn.Linear(nhidlast, n_experts, bias=False)
         
-        #self.d = 1
-        self.reduce = nn.Linear(nhidlast, n_experts)
+        self.reduce = nn.Sequential(nn.Linear(nhidlast, n_experts), nn.Softplus())
         self.sigmoid = nn.Sigmoid()
         
         self.latent = nn.Sequential(nn.Linear(nhidlast, n_experts*ninp), nn.Tanh())
@@ -41,14 +40,17 @@ class MoShead(nn.Module):
         latent = self.lockdrop(latent, dropoutl)  # h after variational dropout [seq_len x batch_size x n_experts * ninp]
         logit = self.decoder(latent.view(-1, self.ninp))  # HW [seq_len * batch_size * n_experts x voc_size]
 
-        a = self.reduce(output.view(-1, self.nhidlast))  # [seq_len * batch_size x n_experts]
+        a = self.reduce(output.view(-1, self.nhidlast)) + 1e-8 # [seq_len * batch_size x n_experts]
         b = torch.sum(a, 1)
         c = torch.cumsum(a, 1)
         d = torch.abs(b[:, None] - c)
+        a = a.to('cpu')
+        d = d.to('cpu')
         beta = torch.distributions.Beta(a, d)
         sample = beta.rsample()  # [seq_len * batch_size x n_experts]
+        sample = sample.to('cuda')
         rem = 1 - sample
-        D = torch.diag(torch.ones(self.n_experts - 1), 1)
+        D = torch.diag(torch.ones(self.n_experts - 1, device=device), 1)
         rem = rem @ D
         rem[:, 0] = 1
         remprod = torch.cumprod(rem, 1)
@@ -148,12 +150,12 @@ class RNNModel(nn.Module):
         # return [(weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_(),
         #          weight.new(1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast).zero_())
         #         for l in range(self.nlayers)]
-        #if torch.cuda.is_available():
-        #    return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True).cuda(),
-        #         torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True).cuda())
-        #        for l in range(self.nlayers)]
-        #else:
-        return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True),
+        if torch.cuda.is_available():
+            return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True).cuda(),
+                 torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True).cuda())
+                for l in range(self.nlayers)]
+        else:
+            return [(torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True),
                  torch.zeros((1, bsz, self.nhid if l != self.nlayers - 1 else self.nhidlast), requires_grad=True))
                 for l in range(self.nlayers)]
 
