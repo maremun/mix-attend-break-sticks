@@ -23,8 +23,8 @@ class MoShead(nn.Module):
         self.latent = nn.Sequential(nn.Linear(nhidlast, n_experts*ninp), nn.Tanh())
         self.decoder = nn.Linear(ninp, ntoken)
         if tie_weights:
-            if nhid != ninp:
-                raise ValueError('When using the tied flag, nhid must be equal to emsize')
+           #  if nhid != ninp:
+           #      raise ValueError('When using the tied flag, nhid must be equal to emsize')
             self.decoder.weight = encoder.weight
 
     def forward(self, output, dropoutl):
